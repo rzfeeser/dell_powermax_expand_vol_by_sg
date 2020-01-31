@@ -1,0 +1,5 @@
+---
+un: smc
+pw: smc
+sg2expand: ## SG's to target -- set here or at CLI ex: ansible_sg
+nsig: ## New Size of Volumes within SG -- Set here or at CLI ex: 30

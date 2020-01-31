@@ -1,0 +1,111 @@
+---
+- name: Pre-Check Phase
+  block:    
+    - name: Run PMax gather_facts module
+      dellemc_powermax_gatherfacts:
+        unispherehost: "{{ ush }}"
+        universion: "{{ usv }}"
+        verifycert: "{{ vc }}"
+        user: "{{ un }}"
+        password: "{{ pw }}"
+      register: results
+
+    - name: Provide serial number for next gather facts
+      dellemc_powermax_gatherfacts:
+        unispherehost: "{{ ush }}"
+        universion: "{{ usv }}"
+        verifycert: "{{ vc }}"
+        user: "{{ un }}"
+        password: "{{ pw }}"
+        serial_no: "{{ results.Arrays[0] }}"
+        gather_subset:
+          - vol
+          - sg
+          - srp
+          - pg
+          - host
+          - hg
+          - port
+          - mv
+          - rdf
+      register: arrayresults
+
+    # this is created on the controller
+    # because the playbook is running against host: localhost
+    - name: Create a location for PowerMax output
+      file:
+        state: directory
+        dest: pmax_audit/
+
+    # this is created on the controller
+    # because the playbook is running against host: localhost
+    - name: Create output file
+      copy:
+        dest: "pmax_audit/{{ results.Arrays[0] }}-{{ ansible_date_time.date }}.json"
+        content: "{{ arrayresults }}"
+        
+    - name: Fail is Storage Group does not exist
+      fail:
+        msg: "The Storage Group you supplied does not exist within the PMax array! Aborting!"
+      when: "sg2expand not in arrayresults.StorageGroups"
+      
+  # if the rescue block successfully executes then the playbook will continue
+  # a second fail within the rescue block will abort the entire playbook    
+  rescue:
+    - name: Pre-Check phase FAILED. Exiting.
+      fail:
+        msg: Pre-Check phase FAILED. Playbook will not continue. Exiting.
+
+
+- name: Maintenance Phase - Expand Volume
+  block:
+    - name: Pick up volumes within a storage group
+      dellemc_powermax_storagegroup:
+        unispherehost: "{{ ush }}"
+        universion: "{{ usv }}"
+        verifycert: "{{ vc }}"
+        user: "{{ un }}"
+        password: "{{ pw }}"
+        serial_no: "{{ results.Arrays[0] }}"
+        sg_name: "{{ sg2expand }}"
+        service_level: "Diamond"
+        srp: "SRP_1"
+        compression: True
+        state: present     ## change this to absent to remove storage group
+      register: sgresults
+
+    - name: Expand Volume
+      dellemc_powermax_volume:
+        unispherehost: "{{ ush }}"
+        universion: "{{ usv }}"
+        verifycert: "{{ vc }}"
+        user: "{{ un }}"
+        password: "{{ pw }}"
+        serial_no: "{{ results.Arrays[0] }}"
+        size: "{{ new_size_in_gb }}"
+        cap_unit: GB
+        vol_id: "{{ item }}"
+        state: present
+      register: expandvolresults
+      loop: "{{ sgresults.storage_group_volumes }}"
+        
+  rescue:          
+    - name: Failed expanding volume
+      fail:
+        msg: "Failed expanding volume. Consider designing rollback tasks before exiting."
+        
+- name: Post-Check
+  block:
+    # this is created on the controller
+    # because the playbook is running against host: localhost
+    - name: Create a location for PowerMax output
+      file:
+        state: directory
+        dest: pmax_audit/exp_vol_by_sg/
+  
+    # this is created on the controller
+    # because the playbook is running against host: localhost
+    - name: Create output file that is results of expanding volumes
+      copy:
+        dest: "pmax_audit/exp_vol_by_sg/{{ expandvolresults }}-{{ ansible_date_time.date }}.json"
+        content: "{{ expandvolresults }}"
